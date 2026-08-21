@@ -1,2 +1,58 @@
 # deploy-bluegreen
-Zero-downtime deploys for a single docker compose service — no Swarm, no Kubernetes, ~70 lines of bash.
+
+Zero-downtime deploys for a single `docker compose` service — no Swarm, no
+Kubernetes, no extra orchestrator. Just a ~70-line bash script.
+
+We run this in production for several self-hosted services and wrote it up
+because most "zero-downtime docker compose deploy" advice online assumes
+you're already on Swarm or k8s. If you're just running `docker compose` on a
+box, this fills that gap.
+
+## How it works
+
+A plain `docker compose up -d` always reconciles to exactly one container
+per service — it stops the old one before the new one is ready, so your
+reverse proxy 502s for a few seconds. This script instead:
+
+1. Starts a second container (`<name>_green`) alongside the running one
+   (`<name>`), using `docker compose run` instead of `up` — `run` always
+   creates a fresh container, `up` never gives you two.
+2. Polls the new container's healthcheck until it reports `healthy`.
+   Label-based reverse proxies (Traefik, and most others) pool every
+   container sharing the same service labels regardless of container name or
+   count, so both old and new are already serving traffic at this point.
+3. Removes the old container and renames the new one into its place.
+4. On healthcheck timeout, it removes the new container and leaves the old
+   one untouched — a safe no-op failure, not a rollback of a swap that
+   already happened.
+
+## Requirements
+
+- Your service needs a working `HEALTHCHECK` (in the Dockerfile or compose
+  file) — this is how the script knows when to cut over.
+- The new image must already be present locally (pulled, built, or loaded)
+  before you run this — it never triggers a pull itself.
+
+## Usage
+
+```bash
+COMPOSE_FILE=docker-compose.yml ENV_FILE=.env \
+  ./deploy-bluegreen.sh <compose-service> [timeout-seconds]
+```
+
+```bash
+./deploy-bluegreen.sh backend        # default 120s healthcheck timeout
+./deploy-bluegreen.sh backend 180
+```
+
+## Gotcha if you deploy this same service again later
+
+The container this leaves behind carries compose's `oneoff` label (an
+artifact of using `run` instead of `up`). A later plain `docker compose up
+-d` on that service will try to create a *second* container under the same
+name and fail with a conflict. Always redeploy that service through this
+script again, not a bare `up -d`.
+
+## License
+
+MIT
