@@ -30,8 +30,19 @@ reverse proxy 502s for a few seconds. This script instead:
 
 - Your service needs a working `HEALTHCHECK` (in the Dockerfile or compose
   file) — this is how the script knows when to cut over.
+- `python3` on the host (used to read `container_name` from `docker compose config`),
+  and an explicit `container_name` on the service.
 - The new image must already be present locally (pulled, built, or loaded)
   before you run this — it never triggers a pull itself.
+
+## Install
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Fanpino/deploy-bluegreen/main/deploy-bluegreen.sh
+chmod +x deploy-bluegreen.sh
+```
+
+Put it next to your compose file, or anywhere and point `COMPOSE_FILE` at it.
 
 ## Usage
 
@@ -45,6 +56,29 @@ COMPOSE_FILE=docker-compose.yml ENV_FILE=.env \
 ./deploy-bluegreen.sh backend 180
 ```
 
+### Example with Traefik
+
+Nothing special is needed on the Traefik side. Give the service a
+healthcheck, an explicit `container_name` (the script reads it to name the
+green container) and the usual labels:
+
+```yaml
+services:
+  backend:
+    image: myapp-backend:latest
+    container_name: backend
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8000/health"]
+      interval: 5s
+      retries: 5
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.backend.rule=Host(`api.example.com`)
+      - traefik.http.services.backend.loadbalancer.server.port=8000
+```
+
+Then a deploy is: build or load the new image, run `./deploy-bluegreen.sh backend`.
+
 ## Gotcha if you deploy this same service again later
 
 The container this leaves behind carries compose's `oneoff` label (an
@@ -55,4 +89,8 @@ script again, not a bare `up -d`.
 
 ## License
 
-MIT
+MIT, see [LICENSE](LICENSE).
+
+---
+
+Built and used in production by [Fanpino](https://fanpino.com/en/), a Dubai-based software studio making multi-tenant SaaS (helpdesk, MES, self-hosted email).
